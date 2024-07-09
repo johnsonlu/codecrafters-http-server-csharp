@@ -18,7 +18,22 @@ var request = Encoding.UTF8.GetString(buffer, 0, bytesRead);
 
 var (_, target, _) = ParseRequestLine(request);
 
-var response = target.Equals("/") ? "HTTP/1.1 200 OK\r\n\r\n" : "HTTP/1.1 404 Not Found\r\n\r\n";
+string? response;
+
+if (target.Equals("/"))
+{
+    response = "HTTP/1.1 200 OK\r\n\r\n";
+}
+else if (target.StartsWith("/echo/"))
+{
+    var echoContent = target[6..];
+    response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+}
+else
+{
+    response = "HTTP/1.1 404 Not Found\r\n\r\n";
+}
+
 await socket.SendAsync(Encoding.UTF8.GetBytes(response));
 
 static (string Method, string Target, string Version) ParseRequestLine(string httpRequest)
