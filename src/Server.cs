@@ -11,23 +11,43 @@ server.Start();
 
 var socket = server.AcceptSocket();
 
+var requestBuilder = new StringBuilder();
 var buffer = new byte[1024];
-var bytesRead = await socket.ReceiveAsync(buffer);
 
-var request = Encoding.UTF8.GetString(buffer, 0, bytesRead);
+while (true)
+{
+    var bytesRead = await socket.ReceiveAsync(buffer);
 
-var (_, target, _) = ParseRequestLine(request);
+    if (bytesRead > 0)
+    {
+        requestBuilder.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+    }
+
+    if (socket.Available == 0)
+    {
+        break;
+    }
+}
+
+var requestContent = requestBuilder.ToString();
+
+var httpRequest = HttpRequestParser.Parse(requestContent);
 
 string? response;
 
-if (target.Equals("/"))
+if (httpRequest.Target.Equals("/"))
 {
     response = "HTTP/1.1 200 OK\r\n\r\n";
 }
-else if (target.StartsWith("/echo/"))
+else if (httpRequest.Target.StartsWith("/echo/"))
 {
-    var echoContent = target[6..];
+    var echoContent = httpRequest.Target[6..];
     response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+}
+else if (httpRequest.Target.Equals("/user-agent"))
+{
+    var userAgent = httpRequest.Headers.GetValueOrDefault("User-Agent", string.Empty);
+    response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{userAgent.Length}\r\n\r\n{userAgent}";
 }
 else
 {
@@ -36,13 +56,58 @@ else
 
 await socket.SendAsync(Encoding.UTF8.GetBytes(response));
 
-static (string Method, string Target, string Version) ParseRequestLine(string httpRequest)
+public class HttpRequestParser
 {
-    var firstLineIndex = httpRequest.IndexOf("\r\n");
-    var requestLine = httpRequest[..(firstLineIndex + 1)];
+    private static readonly char[] HeaderSeparator = new char[] { ':' };
+    private static readonly char[] RequestLineSeparator = new char[] { ' ' };
 
-    string[] tokens = requestLine.Split(
-        new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    public static HttpRequest Parse(string requestContent)
+    {
+        var lines = requestContent.Split(
+            "\r\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-    return (tokens[0], tokens[1], tokens[2]);
+        var (method, target, version) = ParseRequestLine(lines[0]);
+        var headers = ParseHeaders(lines[1..]);
+
+        return new HttpRequest
+        {
+            Method = method,
+            Target = target,
+            Version = version,
+            Headers = headers
+        };
+    }
+
+    private static (string Method, string Target, string Version) ParseRequestLine(string requestLine)
+    {
+        string[] tokens = requestLine.Split(
+            RequestLineSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return (tokens[0], tokens[1], tokens[2]);
+    }
+
+    private static Dictionary<string, string> ParseHeaders(IEnumerable<string> lines)
+    {
+        var result = new Dictionary<string, string>();
+        foreach (var line in lines)
+        {
+            var tokens = line.Split(
+                HeaderSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (tokens.Length == 2)
+            {
+                result.Add(tokens[0], tokens[1]);
+            }
+        }
+
+        return result;
+    }
+}
+
+public class HttpRequest
+{
+    public string Method { get; set; }
+    public string Target { get; set; }
+    public string Version { get; set; }
+
+    public Dictionary<string, string> Headers { get; set; }
 }
