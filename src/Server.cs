@@ -9,52 +9,59 @@ Console.WriteLine("Logs from your program will appear here!");
 TcpListener server = new(IPAddress.Any, 4221);
 server.Start();
 
-var socket = server.AcceptSocket();
-
-var requestBuilder = new StringBuilder();
-var buffer = new byte[1024];
-
 while (true)
 {
-    var bytesRead = await socket.ReceiveAsync(buffer);
+    var socket = server.AcceptSocket();
+    Task.Run(() => HandleHttpRequest(socket));
+}
 
-    if (bytesRead > 0)
+static async Task HandleHttpRequest(Socket socket)
+{
+    var requestBuilder = new StringBuilder();
+    var buffer = new byte[1024];
+
+    while (true)
     {
-        requestBuilder.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+        var bytesRead = await socket.ReceiveAsync(buffer);
+
+        if (bytesRead > 0)
+        {
+            requestBuilder.Append(Encoding.UTF8.GetString(buffer, 0, bytesRead));
+        }
+
+        if (socket.Available == 0)
+        {
+            break;
+        }
     }
 
-    if (socket.Available == 0)
+    var requestContent = requestBuilder.ToString();
+
+    var httpRequest = HttpRequestParser.Parse(requestContent);
+
+    string? response;
+
+    if (httpRequest.Target.Equals("/"))
     {
-        break;
+        response = "HTTP/1.1 200 OK\r\n\r\n";
     }
-}
+    else if (httpRequest.Target.StartsWith("/echo/"))
+    {
+        var echoContent = httpRequest.Target[6..];
+        response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+    }
+    else if (httpRequest.Target.Equals("/user-agent"))
+    {
+        var userAgent = httpRequest.Headers.GetValueOrDefault("User-Agent", string.Empty);
+        response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{userAgent.Length}\r\n\r\n{userAgent}";
+    }
+    else
+    {
+        response = "HTTP/1.1 404 Not Found\r\n\r\n";
+    }
 
-var requestContent = requestBuilder.ToString();
-
-var httpRequest = HttpRequestParser.Parse(requestContent);
-
-string? response;
-
-if (httpRequest.Target.Equals("/"))
-{
-    response = "HTTP/1.1 200 OK\r\n\r\n";
+    await socket.SendAsync(Encoding.UTF8.GetBytes(response));
 }
-else if (httpRequest.Target.StartsWith("/echo/"))
-{
-    var echoContent = httpRequest.Target[6..];
-    response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
-}
-else if (httpRequest.Target.Equals("/user-agent"))
-{
-    var userAgent = httpRequest.Headers.GetValueOrDefault("User-Agent", string.Empty);
-    response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{userAgent.Length}\r\n\r\n{userAgent}";
-}
-else
-{
-    response = "HTTP/1.1 404 Not Found\r\n\r\n";
-}
-
-await socket.SendAsync(Encoding.UTF8.GetBytes(response));
 
 public class HttpRequestParser
 {
