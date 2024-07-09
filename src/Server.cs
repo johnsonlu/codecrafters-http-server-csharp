@@ -5,6 +5,8 @@ using System.Text;
 // You can use print statements as follows for debugging, they'll be visible when running tests.
 Console.WriteLine("Logs from your program will appear here!");
 
+var filesDirectory = GetFilesFolder();
+
 // Uncomment this block to pass the first stage
 TcpListener server = new(IPAddress.Any, 4221);
 server.Start();
@@ -12,10 +14,27 @@ server.Start();
 while (true)
 {
     var socket = server.AcceptSocket();
-    Task.Run(() => HandleHttpRequest(socket));
+    Task.Run(() => HandleHttpRequest(socket, filesDirectory));
 }
 
-static async Task HandleHttpRequest(Socket socket)
+static string GetFilesFolder()
+{
+    var args = Environment.GetCommandLineArgs();
+
+    string directory = string.Empty;
+    for (int i = 1; i < args.Length; i++)
+    {
+        if (args[i].Equals("--directory"))
+        {
+            directory = i + 1 < args.Length ? args[i + 1] : string.Empty;
+            break;
+        }
+    }
+
+    return directory;
+}
+
+static async Task HandleHttpRequest(Socket socket, string filesDirectory)
 {
     var requestBuilder = new StringBuilder();
     var buffer = new byte[1024];
@@ -54,6 +73,21 @@ static async Task HandleHttpRequest(Socket socket)
     {
         var userAgent = httpRequest.Headers.GetValueOrDefault("User-Agent", string.Empty);
         response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{userAgent.Length}\r\n\r\n{userAgent}";
+    }
+    else if (httpRequest.Target.StartsWith("/files/"))
+    {
+        var fileName = httpRequest.Target[7..];
+        var path = Path.Combine(filesDirectory, fileName);
+        if (File.Exists(path))
+        {
+            var fileContent = File.ReadAllText(path);
+            var contentLength = Encoding.UTF8.GetByteCount(fileContent);
+            response = $"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length:{contentLength}\r\n\r\n{fileContent}";
+        }
+        else
+        {
+            response = "HTTP/1.1 404 Not Found\r\n\r\n";
+        }
     }
     else
     {
