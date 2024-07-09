@@ -78,6 +78,18 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
     {
         var fileName = httpRequest.Target[7..];
         var path = Path.Combine(filesDirectory, fileName);
+        response = httpRequest.Method.Equals("GET") ? HandleGetFile(path) : HandlePostFile(path, httpRequest.Body);
+    }
+    else
+    {
+        response = "HTTP/1.1 404 Not Found\r\n\r\n";
+    }
+
+    await socket.SendAsync(Encoding.UTF8.GetBytes(response));
+
+    static string HandleGetFile(string path)
+    {
+        string? response;
         if (File.Exists(path))
         {
             var fileContent = File.ReadAllText(path);
@@ -88,13 +100,16 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
         {
             response = "HTTP/1.1 404 Not Found\r\n\r\n";
         }
-    }
-    else
-    {
-        response = "HTTP/1.1 404 Not Found\r\n\r\n";
+
+        return response;
     }
 
-    await socket.SendAsync(Encoding.UTF8.GetBytes(response));
+    static string HandlePostFile(string path, string fileContent)
+    {
+        File.WriteAllText(path, fileContent);
+
+        return "HTTP/1.1 201 Created\r\n\r\n";
+    }
 }
 
 public class HttpRequestParser
@@ -104,18 +119,18 @@ public class HttpRequestParser
 
     public static HttpRequest Parse(string requestContent)
     {
-        var lines = requestContent.Split(
-            "\r\n", StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var lines = requestContent.Split("\r\n", StringSplitOptions.TrimEntries);
 
         var (method, target, version) = ParseRequestLine(lines[0]);
-        var headers = ParseHeaders(lines[1..]);
+        var (headers, body) = ParseHeadersAndBody(lines);
 
         return new HttpRequest
         {
             Method = method,
             Target = target,
             Version = version,
-            Headers = headers
+            Headers = headers,
+            Body = body
         };
     }
 
@@ -126,21 +141,33 @@ public class HttpRequestParser
         return (tokens[0], tokens[1], tokens[2]);
     }
 
-    private static Dictionary<string, string> ParseHeaders(IEnumerable<string> lines)
+    private static (Dictionary<string, string> Headers, string Body) ParseHeadersAndBody(string[] lines)
     {
-        var result = new Dictionary<string, string>();
-        foreach (var line in lines)
+        var headers = new Dictionary<string, string>();
+        var body = string.Empty;
+
+        for (int i = 1; i < lines.Length; i++)
         {
+            var line = lines[i];
+            if (string.IsNullOrEmpty(line))
+            {
+                if (i + 1 < lines.Length)
+                {
+                    body = lines[i + 1];
+                }
+                break;
+            }
+
             var tokens = line.Split(
                 HeaderSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
             if (tokens.Length == 2)
             {
-                result.Add(tokens[0], tokens[1]);
+                headers.Add(tokens[0], tokens[1]);
             }
         }
 
-        return result;
+        return (headers, body);
     }
 }
 
@@ -151,4 +178,6 @@ public class HttpRequest
     public string Version { get; set; }
 
     public Dictionary<string, string> Headers { get; set; }
+
+    public string Body { get; set; }
 }
