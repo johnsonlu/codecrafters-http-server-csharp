@@ -74,7 +74,8 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
         var useGzipCompression = encodings.Contains("gzip");
         if (useGzipCompression)
         {
-            response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+            var compressedContent = Compressor.CompressWithGzip(echoContent);
+            response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length:{compressedContent.Length}\r\n\r\n{compressedContent}";
         }
         else
         {
@@ -196,7 +197,7 @@ public static class Compressor
 
         var outputBytes = outputStream.ToArray();
 
-        return Encoding.UTF8.GetString(outputBytes);
+        return Convert.ToHexString(outputBytes);
     }
 }
 
