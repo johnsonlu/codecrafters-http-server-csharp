@@ -69,7 +69,9 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
     {
         var echoContent = httpRequest.Target[6..];
         var acceptEncoding = httpRequest.Headers.GetValueOrDefault("Accept-Encoding", string.Empty);
-        var useGzipCompression = acceptEncoding.Equals("gzip");
+        var encodings = acceptEncoding.Split(
+            ',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var useGzipCompression = encodings.Contains("gzip");
         if (useGzipCompression)
         {
             response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
@@ -124,8 +126,8 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
 
 public class HttpRequestParser
 {
-    private static readonly char[] HeaderSeparator = new char[] { ':' };
-    private static readonly char[] RequestLineSeparator = new char[] { ' ' };
+    private static readonly char HeaderSeparator = ':';
+    private static readonly char RequestLineSeparator = ' ';
 
     public static HttpRequest Parse(string requestContent)
     {
