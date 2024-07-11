@@ -35,7 +35,7 @@ static string GetFilesFolder()
     return directory;
 }
 
-static async Task HandleHttpRequest(Socket socket, string filesDirectory)
+static async Task<string> GetRequestContent(Socket socket)
 {
     var requestBuilder = new StringBuilder();
     var buffer = new byte[1024];
@@ -56,14 +56,38 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
     }
 
     var requestContent = requestBuilder.ToString();
+    return requestContent;
+}
 
-    var httpRequest = HttpRequestParser.Parse(requestContent);
-
+static string HandleGetFile(string path)
+{
     string? response;
+    if (File.Exists(path))
+    {
+        var fileContent = File.ReadAllText(path);
+        var contentLength = Encoding.UTF8.GetByteCount(fileContent);
+        response = $"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length:{contentLength}\r\n\r\n{fileContent}";
+    }
+    else
+    {
+        response = "HTTP/1.1 404 Not Found\r\n\r\n";
+    }
 
+    return response;
+}
+
+static string HandlePostFile(string path, string fileContent)
+{
+    File.WriteAllText(path, fileContent);
+
+    return "HTTP/1.1 201 Created\r\n\r\n";
+}
+
+static byte[] GetHttpResponse(HttpRequest httpRequest, string filesDirectory)
+{
     if (httpRequest.Target.Equals("/"))
     {
-        response = "HTTP/1.1 200 OK\r\n\r\n";
+        return Encoding.UTF8.GetBytes("HTTP/1.1 200 OK\r\n\r\n");
     }
     else if (httpRequest.Target.StartsWith("/echo/"))
     {
@@ -74,55 +98,42 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
         var useGzipCompression = encodings.Contains("gzip");
         if (useGzipCompression)
         {
-            var compressedContent = Compressor.CompressWithGzip(echoContent);
-            response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length:{compressedContent.Length}\r\n\r\n{compressedContent}";
+            var compressedBytes = Compressor.CompressWithGzip(echoContent);
+            var response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {compressedBytes.Length}\r\nContent-Encoding: gzip\r\n\r\n";
+            return [.. Encoding.UTF8.GetBytes(response), .. compressedBytes];
         }
         else
         {
-            response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+            var response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+            return Encoding.UTF8.GetBytes(response);
         }
     }
     else if (httpRequest.Target.Equals("/user-agent"))
     {
         var userAgent = httpRequest.Headers.GetValueOrDefault("User-Agent", string.Empty);
-        response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{userAgent.Length}\r\n\r\n{userAgent}";
+        var response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{userAgent.Length}\r\n\r\n{userAgent}";
+        return Encoding.UTF8.GetBytes(response);
     }
     else if (httpRequest.Target.StartsWith("/files/"))
     {
         var fileName = httpRequest.Target[7..];
         var path = Path.Combine(filesDirectory, fileName);
-        response = httpRequest.Method.Equals("GET") ? HandleGetFile(path) : HandlePostFile(path, httpRequest.Body);
+        var response = httpRequest.Method.Equals("GET") ? HandleGetFile(path) : HandlePostFile(path, httpRequest.Body);
+        return Encoding.UTF8.GetBytes(response);
     }
     else
     {
-        response = "HTTP/1.1 404 Not Found\r\n\r\n";
+        return Encoding.UTF8.GetBytes("HTTP/1.1 404 Not Found\r\n\r\n");
     }
+}
 
-    await socket.SendAsync(Encoding.UTF8.GetBytes(response));
+static async Task HandleHttpRequest(Socket socket, string filesDirectory)
+{
+    var requestContent = await GetRequestContent(socket);
 
-    static string HandleGetFile(string path)
-    {
-        string? response;
-        if (File.Exists(path))
-        {
-            var fileContent = File.ReadAllText(path);
-            var contentLength = Encoding.UTF8.GetByteCount(fileContent);
-            response = $"HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nContent-Length:{contentLength}\r\n\r\n{fileContent}";
-        }
-        else
-        {
-            response = "HTTP/1.1 404 Not Found\r\n\r\n";
-        }
+    var httpRequest = HttpRequestParser.Parse(requestContent);
 
-        return response;
-    }
-
-    static string HandlePostFile(string path, string fileContent)
-    {
-        File.WriteAllText(path, fileContent);
-
-        return "HTTP/1.1 201 Created\r\n\r\n";
-    }
+    await socket.SendAsync(GetHttpResponse(httpRequest, filesDirectory));
 }
 
 public class HttpRequestParser
@@ -186,18 +197,17 @@ public class HttpRequestParser
 
 public static class Compressor
 {
-    public static string CompressWithGzip(string input)
+    public static byte[] CompressWithGzip(string input)
     {
         var inputBytes = Encoding.UTF8.GetBytes(input);
 
         using var outputStream = new MemoryStream();
-        using var gZipStream = new GZipStream(outputStream, CompressionMode.Compress);
+        using (var gzipStream = new GZipStream(outputStream, CompressionMode.Compress))
+        {
+            gzipStream.Write(inputBytes);
+        }
 
-        gZipStream.Write(inputBytes, 0, inputBytes.Length);
-
-        var outputBytes = outputStream.ToArray();
-
-        return Convert.ToHexString(outputBytes);
+        return outputStream.ToArray();
     }
 }
 
