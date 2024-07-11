@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -67,7 +68,16 @@ static async Task HandleHttpRequest(Socket socket, string filesDirectory)
     else if (httpRequest.Target.StartsWith("/echo/"))
     {
         var echoContent = httpRequest.Target[6..];
-        response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+        var acceptEncoding = httpRequest.Headers.GetValueOrDefault("Accept-Encoding", string.Empty);
+        var useGzipCompression = acceptEncoding.Equals("gzip");
+        if (useGzipCompression)
+        {
+            response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Encoding: gzip\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+        }
+        else
+        {
+            response = $"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length:{echoContent.Length}\r\n\r\n{echoContent}";
+        }
     }
     else if (httpRequest.Target.Equals("/user-agent"))
     {
@@ -168,6 +178,23 @@ public class HttpRequestParser
         }
 
         return (headers, body);
+    }
+}
+
+public static class Compressor
+{
+    public static string CompressWithGzip(string input)
+    {
+        var inputBytes = Encoding.UTF8.GetBytes(input);
+
+        using var outputStream = new MemoryStream();
+        using var gZipStream = new GZipStream(outputStream, CompressionMode.Compress);
+
+        gZipStream.Write(inputBytes, 0, inputBytes.Length);
+
+        var outputBytes = outputStream.ToArray();
+
+        return Encoding.UTF8.GetString(outputBytes);
     }
 }
 
